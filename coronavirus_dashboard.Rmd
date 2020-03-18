@@ -1,0 +1,262 @@
+---
+title: "Automated Report: Tracking Coronavirus"
+author: "Red Oak Strategic"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+params:
+  today: !r Sys.Date()
+  yesterday: !r Sys.Date() - 1
+  specific_date: !r as.Date("2020-02-29")
+  country: "USA"
+  global: FALSE
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, include = FALSE}
+
+library(tidyverse)
+library(RCurl)
+library(rmarkdown)
+library(knitr)
+library(parameters)
+library(janitor)
+library(tigris)
+library(sf)
+library(kableExtra)
+library(rvest)
+library(magrittr)
+library(ggmap)
+library(stringr)
+
+options(tigris_class = "sf")
+options(tigris_use_cache = TRUE)
+
+```
+
+
+```{r}
+
+cases_URL <- getURL("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv")
+
+cases <- read_csv(cases_URL) %>% 
+  clean_names() 
+
+deaths_URL <- getURL("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Deaths.csv")
+
+deaths <- read_csv(deaths_URL) %>% 
+  clean_names()
+  
+
+cases_long <- cases %>% 
+  pivot_longer(
+    cols = starts_with("x"), 
+    names_to = "date", 
+    values_to = "cases",
+    values_drop_na = FALSE) %>% 
+  mutate(date = parse_date(x = date, format = "x%m_%d_%y"))
+
+deaths_long <- deaths %>% 
+  pivot_longer(
+    cols = starts_with("x"), 
+    names_to = "date", 
+    values_to = "deaths",
+    values_drop_na = FALSE) %>% 
+  mutate(date = parse_date(x = date, format = "x%m_%d_%y"))
+
+
+combined <- inner_join(cases_long, deaths_long, by = c("province_state", "country_region", "lat", "long", "date")) 
+
+combined$country_region <- recode(combined$country_region, 'US' = 'USA')
+
+snapshot <- combined %>% 
+  filter(date == params$yesterday)
+
+
+
+```
+
+
+## Countries with the most Confirmed Cases as of `r params$today`
+
+```{r}
+
+top_cases <-  cases_long %>% 
+  filter(country_region != "Cruise Ship") %>% 
+  group_by(country_region) %>% 
+  filter(date %in% params$yesterday) %>% 
+  summarise(confirmed = sum(cases)) %>% 
+  arrange(desc(confirmed)) %>% 
+  head(10) 
+  
+top_cases %>%  
+  kable(col.names = c("Country", "Confirmed Cases"), 
+        align     = c("l", "c", "c", "c"), 
+        longtable = TRUE) %>%
+  kable_styling(position = "center")
+  
+```
+
+## The Difference a Couple of Weeks Can Make
+
+```{r top cases chart}
+
+cases_long %>% 
+  group_by(country_region) %>% 
+  filter(date %in% params$yesterday) %>% 
+  summarise(confirmed = sum(cases)) %>% 
+  arrange(desc(confirmed)) %>% 
+  head(10) %>% 
+ggplot(aes(x = reorder(country_region, -confirmed), y = confirmed)) +
+  geom_bar(stat = "identity") +
+  labs(title = paste("Countries with the Most Confirmed Cases", params$yesterday), x = "Countries", y = "Confirmed Cases") +
+  geom_label(aes(y = confirmed, label = confirmed %>% scales::comma()), size = 2.5, vjust = 0.5)
+
+```
+
+
+```{r}
+
+cases_long %>% 
+  filter(country_region != "Cruise Ship") %>% 
+  group_by(country_region) %>% 
+  filter(date %in% params$specific_date) %>% 
+  summarise(confirmed = sum(cases)) %>% 
+  arrange(desc(confirmed)) %>% 
+  head(10) %>% 
+ggplot(aes(x = reorder(country_region, -confirmed), y = confirmed)) +
+  geom_bar(stat = "identity") +
+  labs(title = paste("Countries with the Most Confirmed Cases", params$specific_date), x = "Countries", y = "Confirmed Cases") +
+  geom_label(aes(y = confirmed, label = confirmed %>% scales::comma()), size = 2.5, vjust = 0.5)
+
+
+```
+
+## Death Toll 
+
+```{r}
+
+top_deaths <- deaths_long %>% 
+  filter(country_region != "Cruise Ship") %>% 
+  filter(date %in% params$yesterday) %>% 
+  group_by(country_region) %>%
+  summarise(deaths = sum(deaths)) %>% 
+  arrange(desc(deaths)) %>% 
+  head(10)
+
+top_deaths %>% 
+  ggplot(aes(x = reorder(country_region, -deaths), y = deaths)) +
+  geom_bar(stat = "identity") +
+   geom_label(aes(y = deaths, label = deaths %>% scales::comma()), size = 2.5, vjust = 0.5) +
+  labs(title = paste("Countries with the Highest Death Toll", params$yesterday), x = "Countries", y = "Deaths")
+
+```
+
+## Death rate by country (of countries with more than 500 cases)
+```{r}
+
+death_rate <- combined %>% 
+  filter(country_region != "Cruise Ship") %>% 
+  filter(date %in% params$yesterday) %>% 
+  group_by(country_region) %>%
+  summarise(deaths = sum(deaths), cases = sum(cases), d_rate = (deaths/cases) %>% scales::percent(accuracy = 0.01))
+
+death_rate %>%
+  filter(cases > 500) %>% 
+  select(country_region, cases, d_rate) %>% 
+  arrange(desc(d_rate)) %>% 
+  kable(col.names = c("Country", "Cases", "Death Rate"), 
+        align     = c("l", "c", "c", "c"), 
+        longtable = TRUE) %>%
+  kable_styling(position = "center")
+
+```
+
+
+```{r load world map, eval = params$global}
+world_map <- map_data("world") 
+
+world_map_joined <- left_join(world_map, snapshot, by = c("region" = "country_region"))
+
+```
+
+```{r world map prep, eval = params$global}
+
+world_map_joined <- world_map_joined %>% 
+  mutate(infected = ifelse(is.na(cases), FALSE, TRUE))
+
+```
+
+```{r global infection map, eval = params$global}
+
+world_map_joined %>% 
+  ggplot(aes(x = long.x, y = lat.x, group = group, fill = infected)) +
+  geom_polygon() +
+  scale_fill_manual(values = c("#CCCCCC","#e60000")) +
+  labs(title = paste("Countries with Confirmed Coronavirus Cases as of", params$today),
+       subtitle = "Source: Johns Hopkins University") +
+  theme(panel.grid = element_blank(),
+        plot.title = element_text(size = 20),
+        plot.subtitle = element_text(size = 6),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none")
+
+```
+
+
+```{r Map USA prep, eval = !params$global}
+
+us_states <- states()
+
+continental_us <- us_states %>% 
+  filter(STUSPS != "AK" & STUSPS != "HI")
+
+
+us_join <- left_join(continental_us, snapshot, by = c("NAME" = "province_state"))
+
+
+us_join <- us_join %>% 
+  mutate(infected = ifelse(is.na(cases), FALSE,
+                    ifelse(cases != 0, TRUE, FALSE)))
+
+```
+
+
+```{r national infection map, eval = !params$global}
+
+ggplot() + 
+  geom_sf(aes(fill = infected), data = us_join, colour = "white") +
+  scale_fill_manual(values = c("#CCCCCC","#e60000")) +
+  labs(title = paste("States with Confirmed Coronavirus Cases as of", params$today),
+       subtitle = "Source: Johns Hopkins University") +
+  scale_x_continuous(limits = c(-125, -67)) +
+        scale_y_continuous(limits = c(25, 50)) +
+  theme(panel.grid = element_blank(),
+        plot.title = element_text(size = 20),
+        plot.subtitle = element_text(size = 6),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none")
+
+```
+
+## Full table
+```{r}
+combined %>% 
+  filter(country_region != "Cruise Ship") %>% 
+  group_by(country_region) %>% 
+  filter(date %in% params$yesterday) %>% 
+  summarise(confirmed = sum(cases)) %>% 
+  arrange(desc(confirmed)) %>% 
+  kable(col.names = c("Country", "Confirmed Cases"), 
+        align     = c("l", "c", "c", "c"), 
+        longtable = TRUE) %>%
+  kable_styling(position = "center")
+  
+```
