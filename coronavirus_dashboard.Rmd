@@ -6,9 +6,9 @@ output: html_document
 params:
   today: !r Sys.Date()
   yesterday: !r Sys.Date() - 1
-  specific_date: !r as.Date("2020-02-29")
+  specific_date: !r as.Date("2020-03-21")
   country: "USA"
-  global: FALSE
+  global: TRUE
 ---
 
 ```{r setup, include=FALSE}
@@ -40,12 +40,12 @@ options(tigris_use_cache = TRUE)
 
 ```{r}
 
-cases_URL <- getURL("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv")
+cases_URL <- getURL("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv")
 
 cases <- read_csv(cases_URL) %>% 
   clean_names() 
 
-deaths_URL <- getURL("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Deaths.csv")
+deaths_URL <- getURL("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv")
 
 deaths <- read_csv(deaths_URL) %>% 
   clean_names()
